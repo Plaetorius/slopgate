@@ -102,3 +102,21 @@ test("graph nodes show whole names and the drawing is as wide as its content", a
   const funnel = funnelSvg({ stages: [{ name: "Sent", entered: 100, wentOn: 30, left: 10 }, { name: "Replied", entered: 30 }] });
   assert.ok(funnel.includes("30% went on") && funnel.includes("60% still here") && funnel.includes("last step"));
 });
+
+test("the second provider is preferred, optional, and falls back", async () => {
+  const { ask, parseReview, providerOrder } = await import("./second.mjs");
+  assert.deepEqual(providerOrder({}), ["codex", "claude"]);
+  assert.deepEqual(providerOrder({ secondProvider: { enabled: false } }), ["claude"]);
+  assert.deepEqual(providerOrder({ secondProvider: { name: "gemini" } }), ["gemini", "claude"]);
+
+  const provider = (available, ok) => ({ available: () => available, run: () => ({ ok, output: ok ? "answer" : "", error: "usage limit reached" }) });
+  const order = ["codex", "claude"];
+  assert.equal(ask(order, { codex: provider(true, true), claude: provider(true, true) }, "x", {}).provider, "codex");
+  assert.deepEqual(ask(order, { codex: provider(true, false), claude: provider(true, true) }, "x", {}), { provider: "claude", output: "answer", failures: ["codex failed: usage limit reached"] });
+  assert.deepEqual(ask(order, { codex: provider(false, true), claude: provider(true, true) }, "x", {}).failures, ["codex is not installed"]);
+  assert.equal(ask(order, { codex: provider(false, true), claude: provider(true, false) }, "x", {}).provider, null);
+
+  assert.deepEqual(parseReview('Here it is: {"findings": [], "verdict": "pass"}'), { findings: [], verdict: "pass" });
+  assert.equal(parseReview("I could not review this."), null);
+  assert.equal(parseReview('{"findings": [], "verdict": "maybe"}'), null);
+});

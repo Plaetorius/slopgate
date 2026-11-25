@@ -14,7 +14,7 @@ claude plugin marketplace add Plaetorius/slopgate && claude plugin install slopg
 
 Then start a new Claude Code session. On the first session the plugin installs its own dependencies with pnpm. Nothing else to run.
 
-Requirements: Claude Code, Node 22.5 or later, and [pnpm](https://pnpm.io/installation).
+Requirements: Claude Code, Node 22.5 or later, and [pnpm](https://pnpm.io/installation). The Codex CLI is optional.
 
 To update: `claude plugin update slopgate@slopgate`. To remove: `claude plugin uninstall slopgate@slopgate`.
 
@@ -31,6 +31,7 @@ It works anywhere Claude Code loads your user plugins, including T3 Code threads
 | The agent creates a file | No new Markdown inside the project, outside the paths you allow | Path match |
 | The agent edits `AGENTS.md`, `CLAUDE.md` or the slopgate config | Only when one of your prompts names the file | Your prompts in the session |
 | The agent adds a dependency | Only when one of your prompts names the package | Your prompts in the session |
+| The agent edits a test file | Only when one of your prompts names the file; otherwise tests come from the separate test writer | Your prompts in the session |
 
 Only what an edit adds is counted. Existing comments and existing violations can stay, move or be deleted.
 
@@ -84,6 +85,24 @@ A proof counts only when it holds: a test must fail on the base commit, a perfor
 
 The same script checks the scope of the change: one declared type, one connected slice of files, at most 600 added lines of non-test code. A button and the endpoint it calls belong in one PR. Unrelated groups of files are listed for splitting.
 
+### A second provider writes the tests and reviews the change
+
+The session that writes the code does not write its own tests or review itself. Both jobs go to a second provider when one is available:
+
+| Job | Command | What it does |
+| --- | --- | --- |
+| Tests | `/slopgate:tests` | Writes tests from the acceptance criterion, before the code exists |
+| Review | Runs inside `/slopgate:proof` | Reviews the diff and adds a findings table to the proof page |
+
+The second provider is preferred, not required:
+
+- **On by default.** If the [Codex CLI](https://developers.openai.com/codex/cli) is installed and signed in, it is used.
+- **Falls back on any failure.** If Codex is missing, out of usage or returns an error, a fresh Claude session does the job instead. It has not seen the coding session, so the separation of context is kept.
+- **Never blocks on absence.** If no reviewer can run, the proof page marks the review as "not run" and the rest of the proof still counts.
+- **Can be turned off** with `"secondProvider": { "enabled": false }`, which uses Claude directly. `"review": false` drops the review from proof pages, and `"lockTests": false` lets the coding session edit tests.
+
+A review that finds a blocking problem marks the proof incomplete.
+
 ### `check` covers what the edit hook cannot see
 
 Files written through shell commands bypass the edit hook. Run this in a pre-commit hook or in CI:
@@ -116,6 +135,8 @@ All of it is optional. Create `.claude/slopgate.json` in the repository:
 | --- | --- |
 | `markdownAllow` | Paths where agents may create Markdown. Without it, none. |
 | `ignore` | Paths slopgate never reads. |
+| `secondProvider` | `{ "enabled": true, "name": "codex" }` by default. See above. |
+| `review`, `lockTests` | Both `true` by default. |
 | `proof.capture` | Writes `.png` and `.webm` files into `$SLOPGATE_PROOF_OUT`. Run on the base commit and on the change. |
 | `proof.bench` | Prints one JSON line: `{"metric": "...", "unit": "ms", "samples": [1.2, 1.3]}`. |
 | `proof.test` | Runs one test file. `{file}` is replaced with its path. |
@@ -147,6 +168,7 @@ The first run writes the baseline. Later runs fail when any rule's count rises i
 - The dependency check matches `npm`, `pnpm`, `yarn` and `bun` install commands, not `npx` or `pnpm dlx`.
 - The connected-slice rule sees direct imports and requests. Two files joined only through an unchanged third file are reported as separate.
 - Proof pages are built in the agent's session, not in CI.
+- The review calls a model on every proof run, which costs time and usage.
 
 ## Development
 

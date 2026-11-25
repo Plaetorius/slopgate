@@ -15,6 +15,7 @@ const SECTION_TITLES = {
   schema: "What changes in the database",
   dependencies: "Dependencies",
   gates: "Automatic gates",
+  review: "Independent review",
 };
 
 const esc = (value) => String(value).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
@@ -201,6 +202,14 @@ const sections = {
     const body = [...added.map((name) => ["added", name]), ...removed.map((name) => ["removed", name])].map(([change, name]) => `<tr><td>${change}</td><td><code>${esc(name)}</code></td></tr>`).join("");
     return `<div class="scroll"><table><thead><tr><th>Change</th><th>Package</th></tr></thead><tbody>${body}</tbody></table></div>`;
   },
+  review({ ran, provider, preferred, failures, findings = [] }) {
+    const neutral = (text) => `<span class="status">${esc(text)}</span>`;
+    const who = `<div class="scroll"><table><thead><tr><th>Reviewer</th><th>Preferred</th><th>Note</th></tr></thead><tbody><tr><td>${ran ? status(true, provider, "") : neutral("– not run")}</td><td>${esc(preferred)}</td><td>${esc(failures.join("; ") || "none")}</td></tr></tbody></table></div>`;
+    if (!ran) return who;
+    const rows = findings.map(({ file, line, category, consequence, fix, confidence }) => `<tr><td><code>${esc(file)}:${esc(line)}</code></td><td>${esc(category)}</td><td>${esc(consequence)}</td><td>${esc(fix)}</td><td>${esc(confidence)}</td></tr>`).join("");
+    const table = rows ? `<table><thead><tr><th>Where</th><th>Kind</th><th>Consequence</th><th>Right change</th><th>Confidence</th></tr></thead><tbody>${rows}</tbody></table>` : `<table><thead><tr><th>Findings</th></tr></thead><tbody><tr><td>${status(true, "none", "")}</td></tr></tbody></table>`;
+    return who + `<div class="scroll">${table}</div>`;
+  },
   gates({ rows }) {
     const body = rows.map(({ name, code, output }) => `<tr><td>${esc(name)}</td><td>${status(code === 0, "passes", "fails")}${code === 0 || !output ? "" : `<pre>${esc(output)}</pre>`}</td></tr>`).join("");
     return `<div class="scroll"><table><thead><tr><th>Gate</th><th>Result</th></tr></thead><tbody>${body}</tbody></table></div>`;
@@ -209,8 +218,8 @@ const sections = {
 
 export function renderPage(manifest) {
   const { title, type, base, head, generatedAt, stats, required, scope, proofs, verdict } = manifest;
-  const passed = required.filter(({ ok }) => ok).length;
-  const requiredRows = required.map(({ id, medium, because, ok, reason }) => `<tr><td><a href="#${id}">${esc(SECTION_TITLES[id])}</a></td><td>${esc(because)}</td><td>${esc(medium)}</td><td>${status(ok, "shown", "missing")}${ok ? "" : `<div class="why">${esc(reason)}</div>`}</td></tr>`).join("");
+  const passed = required.filter(({ ok, skipped }) => ok && !skipped).length;
+  const requiredRows = required.map(({ id, medium, because, ok, reason, skipped }) => `<tr><td><a href="#${id}">${esc(SECTION_TITLES[id])}</a></td><td>${esc(because)}</td><td>${esc(medium)}</td><td>${skipped ? `<span class="status">– not run</span><div class="why">${esc(reason)}</div>` : status(ok, "shown", "missing")}${ok ? "" : `<div class="why">${esc(reason)}</div>`}</td></tr>`).join("");
   const scopeRows = scope.map(({ rule, pass, detail }) => `<tr><td>${esc(rule)}</td><td>${status(pass, "holds", "broken")}</td><td>${esc(detail)}</td></tr>`).join("");
   const body = required
     .map(({ id, ok, reason }) => {

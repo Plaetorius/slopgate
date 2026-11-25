@@ -203,6 +203,13 @@ export function evaluate({ filePath, oldText, newText, existed, projectDir, prom
     return violations;
   }
 
+  if (TEST_FILE.test(relative(projectDir, filePath)) && insideProject(filePath, projectDir) && prompts !== null && readConfig(projectDir).lockTests !== false && !prompts.toLowerCase().includes(name.toLowerCase())) {
+    violations.push(
+      `${name} is a test file. Tests are written by the separate test writer, not by the session that writes the code. Run the slopgate tests skill with the acceptance criterion. If this test is wrong, say why and stop; do not change it to fit the code.`,
+    );
+    return violations;
+  }
+
   if (MARKDOWN.has(ext) && !existed && insideProject(filePath, projectDir)) {
     const rel = relative(projectDir, filePath);
     const allowed = rel.split(sep).some((segment) => AGENT_CONFIG_DIRS.has(segment)) || markdownAllowlist(projectDir).some((pattern) => matchesGlob(rel, pattern));

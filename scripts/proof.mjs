@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { CODE_KINDS, TEST_FILE, git, loadTypeScript, readConfig, unignored } from "./gate.mjs";
 import { buildGraph, connectedGroups, moduleEdges, pathAliases } from "./graph.mjs";
 import { quantile, renderPage } from "./render.mjs";
+import { reviewChange } from "./second.mjs";
 
 const TYPES = ["feat", "fix", "perf", "refactor", "chore", "docs", "test"];
 const TITLE = /^(\w+)(?:\([^)]*\))?!?:\s*(.+)$/;
@@ -60,7 +61,7 @@ export function parseTitle(title) {
   return match && TYPES.includes(match[1]) ? { type: match[1], subject: match[2] } : { type: null, subject: title };
 }
 
-export function requiredProofs(type, { layers, interaction, dependencies }) {
+export function requiredProofs(type, { layers, interaction, dependencies, review = false }) {
   const rules = [
     { id: "visual", when: layers.has("ui"), medium: interaction ? "before and after video" : "before and after screenshots", because: interaction ? "interface files changed and the change adds an interaction" : "interface files changed, with no new interaction" },
     { id: "integration", when: layers.has("api"), medium: "layered call graph", because: layers.has("ui") ? "interface and API files changed together" : "API files changed" },
@@ -70,6 +71,7 @@ export function requiredProofs(type, { layers, interaction, dependencies }) {
     { id: "regression", when: type === "feat" || type === "fix", medium: "red-to-green test table", because: `the change is declared as a ${type === "fix" ? "bug fix" : "feature"}` },
     { id: "dependencies", when: dependencies, medium: "table", because: "package.json dependencies changed" },
     { id: "gates", when: true, medium: "pass or fail table", because: "every change" },
+    { id: "review", when: review, medium: "table of findings", because: "every change, unless turned off" },
   ];
   return rules.filter(({ when }) => when).map(({ id, medium, because }) => ({ id, medium, because }));
 }
@@ -239,6 +241,12 @@ const collectors = {
     return { ok: true, data: { added: after.filter((name) => !before.includes(name)), removed: before.filter((name) => !after.includes(name)) } };
   },
 
+  review(ctx) {
+    const data = reviewChange({ dir: ctx.dir, base: ctx.base });
+    if (!data.ran) return { ok: true, skipped: true, reason: data.failures.join("; "), data };
+    return { ok: data.verdict === "pass", reason: data.verdict === "pass" ? "" : "The reviewer found a blocking problem.", data };
+  },
+
   gates(ctx) {
     const commands = { "slopgate check": `node "${gatePath}" check --base ${ctx.base}`, ...(ctx.config.gates ?? {}) };
     const rows = Object.entries(commands).map(([name, command]) => {
@@ -262,6 +270,7 @@ export function buildProof({ dir, base, title, out, previewUrl }) {
   const signals = {
     layers: touched,
     interaction: changes.some(({ rel }) => layerOf(rel) === "ui" && added.get(rel).some((line) => INTERACTION.test(line))),
+    review: readConfig(dir).review !== false,
     dependencies: statusOf.has("package.json") && Object.values(collectors.dependencies({ dir, base }).data).flat().length > 0,
   };
 
@@ -283,9 +292,9 @@ export function buildProof({ dir, base, title, out, previewUrl }) {
   let required;
   try {
     required = requiredProofs(type, signals).map((requirement) => {
-      const { ok, reason = "", data } = collectors[requirement.id](ctx, requirement);
+      const { ok, reason = "", data, skipped = false } = collectors[requirement.id](ctx, requirement);
       if (data) proofs[requirement.id] = data;
-      return { ...requirement, ok, reason };
+      return { ...requirement, ok, reason, skipped };
     });
   } finally {
     if (baseDir) {
@@ -325,7 +334,7 @@ function main() {
   const title = option("--title", git(dir, ["log", "-1", "--format=%s"]).trim());
   const out = resolve(option("--out", join(tmpdir(), "slopgate-proof", basename(dir))));
   const { required, scope, verdict } = buildProof({ dir, base, title, out, previewUrl: option("--preview-url") });
-  const lines = [...required.map(({ id, medium, ok, reason }) => `${ok ? "ok     " : "MISSING"} ${id}: ${medium}${ok ? "" : ` (${reason})`}`), ...scope.filter(({ pass }) => !pass).map(({ rule, detail }) => `SCOPE   ${rule}: ${detail}`)];
+  const lines = [...required.map(({ id, medium, ok, reason, skipped }) => `${skipped ? "NOT RUN" : ok ? "ok     " : "MISSING"} ${id}: ${medium}${ok && !skipped ? "" : ` (${reason})`}`), ...scope.filter(({ pass }) => !pass).map(({ rule, detail }) => `SCOPE   ${rule}: ${detail}`)];
   process.stdout.write(`${lines.join("\n")}\n${verdict ? "PROOF COMPLETE" : "PROOF INCOMPLETE"}: ${join(out, "index.html")}\n`);
   process.exit(verdict ? 0 : 1);
 }

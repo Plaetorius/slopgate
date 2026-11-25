@@ -190,3 +190,12 @@ test("ignored paths are never read by check mode", () => {
   writeFileSync(join(dir, "security", "filters.ts"), "// private\nexport const secret: any = 1;\n");
   assert.equal(spawnSync("node", [gate, "check"], { cwd: dir, encoding: "utf8" }).status, 0);
 });
+
+test("test files are locked to the code-writing session unless a prompt names them", () => {
+  const edit = (file, prompts) => evaluate({ filePath: join("/repo", file), oldText: "", newText: "export {};\n", existed: false, projectDir: "/repo", prompts });
+  assert.match(edit("src/lib/store.test.ts", "add a refresh button")[0], /test writer/);
+  assert.match(edit("tests/e2e/login.spec.ts", "")[0], /test writer/);
+  assert.deepEqual(edit("src/lib/store.test.ts", "fix the assertion in store.test.ts"), []);
+  assert.deepEqual(edit("src/lib/store.test.ts", null), []);
+  assert.deepEqual(edit("src/lib/store.ts", ""), []);
+});
