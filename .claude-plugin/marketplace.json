@@ -1,0 +1,5 @@
+{
+  "name": "slopgate",
+  "owner": { "name": "Tom Gernez" },
+  "plugins": [{ "name": "slopgate", "source": "./", "description": "Blocks vague prompts, comments, new Markdown and slop patterns; builds proof pages for review." }]
+}

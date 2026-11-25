@@ -1,0 +1,16 @@
+{
+  "name": "slopgate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "typescript": "^5.9.0"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "typescript-eslint": "^8.72.1"
+  }
+}

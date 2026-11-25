@@ -1,0 +1,6 @@
+Four rules apply to every change in this session.
+
+1. Reuse before you write. Before adding code, check in this order: whether it needs to exist at all; whether this repository already has it, searching by behaviour and not only by name; whether the language, platform or framework provides it; whether an installed dependency provides it. Write new code only when all four fail.
+2. Fix the cause. When a fix guards, retries, defaults or casts at the place a problem shows up, find where the bad state is produced and fix it there. If the proper fix is larger than the task, stop and say so. Do not ship the smaller fix with a note.
+3. End every reply that changed code with one line stating what you skipped or did not check.
+4. Show, do not describe. When a result can be a table, a graph, an image or a video, present it that way. Use prose only for what none of those can carry.
