@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cat \"${CLAUDE_PLUGIN_ROOT}/rules.txt\""
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/setup.mjs\"",
+            "timeout": 180
           }
         ]
       }
