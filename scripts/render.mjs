@@ -6,6 +6,7 @@ import { layerOf } from "./graph.mjs";
 const NODE = { minWidth: 170, height: 46, gapX: 90, gapY: 16, pad: 14, lane: 36 };
 const FUNNEL = { width: 900, nameColumn: 120, countColumn: 64, row: 38, top: 26, bar: 26 };
 const PLOT = { width: 720, gutter: 96, right: 24, row: 64, top: 8, axis: 46 };
+const TIER_LABELS = { "must review": "Must review: open this page and try the change", view: "View: a look at this page is enough", "digest only": "Digest only: no review needed" };
 const SECTION_TITLES = {
   visual: "What the user sees",
   integration: "How the layers connect",
@@ -217,7 +218,7 @@ const sections = {
 };
 
 export function renderPage(manifest) {
-  const { title, type, base, head, generatedAt, stats, required, scope, proofs, verdict } = manifest;
+  const { title, type, base, head, generatedAt, stats, required, scope, proofs, verdict, tier, tierReasons } = manifest;
   const passed = required.filter(({ ok, skipped }) => ok && !skipped).length;
   const requiredRows = required.map(({ id, medium, because, ok, reason, skipped }) => `<tr><td><a href="#${id}">${esc(SECTION_TITLES[id])}</a></td><td>${esc(because)}</td><td>${esc(medium)}</td><td>${skipped ? `<span class="status">– not run</span><div class="why">${esc(reason)}</div>` : status(ok, "shown", "missing")}${ok ? "" : `<div class="why">${esc(reason)}</div>`}</td></tr>`).join("");
   const scopeRows = scope.map(({ rule, pass, detail }) => `<tr><td>${esc(rule)}</td><td>${status(pass, "holds", "broken")}</td><td>${esc(detail)}</td></tr>`).join("");
@@ -239,6 +240,7 @@ export function renderPage(manifest) {
   <h1>${esc(title[0].toUpperCase() + title.slice(1))}</h1>
   <div class="stamp ${verdict ? "good" : "bad"}"><span aria-hidden="true">${verdict ? "✓" : "✕"}</span> ${verdict ? "Proof complete" : "Proof incomplete"}<small>${passed} of ${required.length} proofs shown · scope ${scope.every(({ pass }) => pass) ? "holds" : "broken"}</small></div>
   <dl class="meta"><div><dt>Base</dt><dd>${esc(base)}</dd></div><div><dt>Change</dt><dd>${esc(head)}</dd></div><div><dt>Files</dt><dd>${stats.files}</dd></div><div><dt>Lines added</dt><dd>${stats.addedLines}</dd></div><div><dt>Generated</dt><dd>${esc(generatedAt)}</dd></div></dl>
+  <div class="tier t-${tier.split(" ")[0]}"><b>${esc(TIER_LABELS[tier])}</b>${tierReasons.length > 0 ? `<ul>${tierReasons.map((reason) => `<li>${esc(reason)}</li>`).join("")}</ul>` : ""}</div>
 </header>
 <section id="required"><h2>Proof this change must show</h2>
 <p class="note">The list comes from fixed rules applied to the declared type and the files changed. The author does not choose it.</p>

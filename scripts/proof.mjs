@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, join, matchesGlob, resolve } from "node:path";
@@ -12,6 +13,8 @@ import { reviewChange } from "./second.mjs";
 const TYPES = ["feat", "fix", "perf", "refactor", "chore", "docs", "test"];
 const TITLE = /^(\w+)(?:\([^)]*\))?!?:\s*(.+)$/;
 const MAX_ADDED_LINES = 600;
+const DIGEST_TYPES = ["chore", "docs", "test"];
+const DEFAULT_SENSITIVE = ["**/auth/**", "**/middleware.*", "**/permissions*", "**/.env*"];
 const INTERACTION = /\bon[A-Z]\w*=|addEventListener\(|<form\b/;
 const MIGRATION_STATEMENT = /^\s*((?:create|alter|drop)\s+(?:unique\s+)?(?:table|index|type|policy|function|view|extension)\b[^;(]*)/i;
 const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
@@ -103,6 +106,24 @@ export function measurementVerdict(base, head, higherIsBetter = false) {
   if (quantile(h, 0.75) < quantile(b, 0.25)) return { verdict: "improved", change };
   if (quantile(h, 0.25) > quantile(b, 0.75)) return { verdict: "regressed", change };
   return { verdict: "no measurable change", change };
+}
+
+export function reviewTier({ type, layers, dependencies, changedApi, sensitive, findings, complete }) {
+  const triggers = [
+    { when: layers.has("db"), reason: "Migration files changed." },
+    { when: dependencies, reason: "package.json dependencies changed." },
+    { when: changedApi.length > 0, reason: `Existing API files changed: ${changedApi.join(", ")}` },
+    { when: sensitive.length > 0, reason: `Sensitive paths changed: ${sensitive.join(", ")}` },
+    { when: !complete, reason: "The proof is incomplete." },
+  ];
+  const reasons = triggers.filter(({ when }) => when).map(({ reason }) => reason);
+  if (reasons.length > 0) return { tier: "must review", reasons };
+  return { tier: DIGEST_TYPES.includes(type) && findings === 0 ? "digest only" : "view", reasons };
+}
+
+export function fingerprint({ base, title, previewUrl, files }) {
+  const ordered = files.map(({ rel, status, text }) => [rel, status, text]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  return createHash("sha256").update(JSON.stringify([base, title, previewUrl ?? null, ordered])).digest("hex");
 }
 
 function run(command, cwd, env = {}) {
@@ -258,11 +279,23 @@ const collectors = {
   },
 };
 
-export function buildProof({ dir, base, title, out, previewUrl }) {
+function stored(out) {
+  try {
+    return JSON.parse(readFileSync(join(out, "proof.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function buildProof({ dir, base, title, out, previewUrl, force = false }) {
   const config = readConfig(dir).proof ?? {};
   const layers = { ...DEFAULT_LAYERS, ...config.layers };
   const { type, subject } = parseTitle(title);
   const changes = readChanges(dir, base).filter(({ rel }) => unignored(dir)(rel));
+  const baseSha = git(dir, ["rev-parse", base]).trim();
+  const state = fingerprint({ base: baseSha, title, previewUrl, files: changes.map(({ rel, status }) => ({ rel, status, text: status === "D" ? "" : readFileSync(join(dir, rel), "utf8") })) });
+  const previous = force ? null : stored(out);
+  if (previous?.fingerprint === state) return { ...previous, reused: true };
   const statusOf = new Map(changes.map(({ rel, status }) => [rel, status]));
   const added = new Map(changes.map((change) => [change.rel, addedLines(dir, base, change)]));
   const layerOf = (rel) => layerOfFile(rel, layers);
@@ -308,14 +341,22 @@ export function buildProof({ dir, base, title, out, previewUrl }) {
   const addedCodeLines = changes.filter(({ rel }) => isCode(rel) && !TEST_FILE.test(rel)).reduce((sum, { rel }) => sum + added.get(rel).length, 0);
   const scope = scopeChecks({ type, changes, layers: touched, addedCodeLines, groups: connectedGroups(slice, edges) });
   const dirty = git(dir, ["status", "--porcelain"]).trim() !== "";
+  const verdict = required.every(({ ok }) => ok) && scope.every(({ pass }) => pass);
+  const sensitive = config.sensitive ?? DEFAULT_SENSITIVE;
+  const review = reviewTier({
+    type, layers: touched, dependencies: signals.dependencies, complete: verdict,
+    changedApi: changes.filter(({ rel, status }) => status !== "A" && layerOf(rel) === "api").map(({ rel }) => rel),
+    sensitive: changes.filter(({ rel }) => sensitive.some((pattern) => matchesGlob(rel, pattern))).map(({ rel }) => rel),
+    findings: proofs.review?.findings?.length ?? 0,
+  });
   const manifest = {
-    title: subject, type,
+    title: subject, type, fingerprint: state,
+    tier: review.tier, tierReasons: review.reasons,
     base: git(dir, ["rev-parse", "--short", base]).trim(),
     head: `${git(dir, ["rev-parse", "--short", "HEAD"]).trim()}${dirty ? " + uncommitted" : ""}`,
     generatedAt: new Date().toISOString().slice(0, 16).replace("T", " "),
     stats: { files: changes.length, addedLines: [...added.values()].reduce((sum, lines) => sum + lines.length, 0) },
-    required, scope, proofs,
-    verdict: required.every(({ ok }) => ok) && scope.every(({ pass }) => pass),
+    required, scope, proofs, verdict,
   };
   writeFileSync(join(out, "proof.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   writeFileSync(join(out, "index.html"), renderPage(manifest));
@@ -328,13 +369,15 @@ function main() {
   const dir = process.cwd();
   const base = option("--base");
   if (!base) {
-    process.stderr.write("usage: proof.mjs --base <ref> [--title <conventional title>] [--preview-url <url>] [--out <dir>]\n");
+    process.stderr.write("usage: proof.mjs --base <ref> [--title <conventional title>] [--preview-url <url>] [--out <dir>] [--force]\n");
     process.exit(64);
   }
   const title = option("--title", git(dir, ["log", "-1", "--format=%s"]).trim());
   const out = resolve(option("--out", join(tmpdir(), "slopgate-proof", basename(dir))));
-  const { required, scope, verdict } = buildProof({ dir, base, title, out, previewUrl: option("--preview-url") });
+  const { required, scope, verdict, tier, tierReasons, reused = false } = buildProof({ dir, base, title, out, previewUrl: option("--preview-url"), force: args.includes("--force") });
   const lines = [...required.map(({ id, medium, ok, reason, skipped }) => `${skipped ? "NOT RUN" : ok ? "ok     " : "MISSING"} ${id}: ${medium}${ok && !skipped ? "" : ` (${reason})`}`), ...scope.filter(({ pass }) => !pass).map(({ rule, detail }) => `SCOPE   ${rule}: ${detail}`)];
+  if (reused) lines.push("REUSED  nothing changed since this proof was built; pass --force to rebuild");
+  lines.push(`TIER    ${tier}${tierReasons.length > 0 ? `: ${tierReasons.join(" ")}` : ""}`);
   process.stdout.write(`${lines.join("\n")}\n${verdict ? "PROOF COMPLETE" : "PROOF INCOMPLETE"}: ${join(out, "index.html")}\n`);
   process.exit(verdict ? 0 : 1);
 }

@@ -83,6 +83,16 @@ The script reads the type from the title and the layers from the changed files, 
 
 A proof counts only when it holds: a test must fail on the base commit, a performance change must show runs that do not overlap, and a new API file must have a caller.
 
+Each proof also carries a review tier, computed from the same signals, that says how much of the reviewer's attention the change needs:
+
+| Tier | When | Reviewer |
+| --- | --- | --- |
+| Must review | Migrations, changed dependencies, an existing API file changed or deleted, a sensitive path changed, or an incomplete proof | Opens the page and tries the change |
+| View | Any other `feat`, `fix`, `perf` or `refactor`, and any change with review findings | Looks at the page |
+| Digest only | `chore`, `docs` or `test` with a complete proof and no findings | Nothing |
+
+Build the proof once, when the change is ready, not on every push. Running the script again on an unchanged change returns the stored proof without calling the reviewer; `--force` rebuilds it.
+
 The same script checks the scope of the change: one declared type, one connected slice of files, at most 600 added lines of non-test code. A button and the endpoint it calls belong in one PR. Unrelated groups of files are listed for splitting.
 
 ### A second provider writes the tests and reviews the change
@@ -141,6 +151,7 @@ All of it is optional. Create `.claude/slopgate.json` in the repository:
 | `proof.bench` | Prints one JSON line: `{"metric": "...", "unit": "ms", "samples": [1.2, 1.3]}`. |
 | `proof.test` | Runs one test file. `{file}` is replaced with its path. |
 | `proof.gates` | Extra commands that must exit 0. |
+| `proof.sensitive` | Globs whose changes always need review. Default: `**/auth/**`, `**/middleware.*`, `**/permissions*`, `**/.env*`. |
 | `proof.layers` | Globs that override which files count as `ui`, `api` and `db`. The defaults fit Next.js. |
 
 ## Lint preset
@@ -168,7 +179,7 @@ The first run writes the baseline. Later runs fail when any rule's count rises i
 - The dependency check matches `npm`, `pnpm`, `yarn` and `bun` install commands, not `npx` or `pnpm dlx`.
 - The connected-slice rule sees direct imports and requests. Two files joined only through an unchanged third file are reported as separate.
 - Proof pages are built in the agent's session, not in CI.
-- The review calls a model on every proof run, which costs time and usage.
+- The review calls a model each time a proof is built for a new state of the change, which costs time and usage.
 
 ## Development
 

@@ -140,3 +140,8 @@ td:has(> .status.bad) { background: var(--bad-bg); }
 .count { font-family: var(--mono); font-size: 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; list-style: none; margin: 0; padding: 0; font-size: 13px; color: var(--muted); }
 .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.tier { border-left: 4px solid var(--muted); background: var(--surface); padding: 10px 14px; border-radius: 0 6px 6px 0; }
+.tier ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.t-must { border-left-color: var(--bad); background: var(--bad-bg); }
+.t-must ul { color: var(--ink); }
+.t-digest { border-left-color: var(--good); background: var(--good-bg); }

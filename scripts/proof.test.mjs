@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CODE_KINDS, loadTypeScript } from "./gate.mjs";
 import { buildGraph, connectedGroups, layerOf, pathAliases, resolveRoute } from "./graph.mjs";
-import { layerOfFile, measurementVerdict, parseTitle, requiredProofs, scopeChecks } from "./proof.mjs";
+import { fingerprint, layerOfFile, measurementVerdict, parseTitle, requiredProofs, reviewTier, scopeChecks } from "./proof.mjs";
 import { countByRuleAndFile, increases } from "./ratchet.mjs";
 
 const ts = loadTypeScript(process.cwd());
@@ -120,3 +120,98 @@ test("the second provider is preferred, optional, and falls back", async () => {
   assert.equal(parseReview("I could not review this."), null);
   assert.equal(parseReview('{"findings": [], "verdict": "maybe"}'), null);
 });
+
+const reviewInput = {
+  type: "chore",
+  layers: new Set(["ui", "api", "lib", "test", "other"]),
+  dependencies: false,
+  changedApi: [],
+  sensitive: [],
+  findings: 0,
+  complete: true,
+};
+
+test("only chores, docs, and tests without findings qualify for digest only", () => {
+  for (const type of ["chore", "docs", "test"]) {
+    assert.deepEqual(reviewTier({ ...reviewInput, type }), { tier: "digest only", reasons: [] }, type);
+    assert.deepEqual(reviewTier({ ...reviewInput, type, findings: 1 }), { tier: "view", reasons: [] }, type);
+  }
+  for (const type of ["feat", "fix", "perf", "refactor", null]) {
+    assert.deepEqual(reviewTier({ ...reviewInput, type }), { tier: "view", reasons: [] }, String(type));
+  }
+});
+
+const reviewTriggers = [
+  ["database layer", { layers: new Set(["lib", "db"]) }, []],
+  ["dependency changes", { dependencies: true }, []],
+  ["existing API files changed", { changedApi: ["src/app/api/jobs/route.ts", "src/app/api/users/route.ts"] }, ["src/app/api/jobs/route.ts", "src/app/api/users/route.ts"]],
+  ["sensitive paths changed", { sensitive: ["src/auth/session.ts", "config/permissions.json"] }, ["src/auth/session.ts", "config/permissions.json"]],
+  ["incomplete proof", { complete: false }, []],
+];
+
+for (const [trigger, overrides, paths] of reviewTriggers) {
+  test(`must review for ${trigger}`, () => {
+    const { tier, reasons } = reviewTier({ ...reviewInput, ...overrides });
+    assert.equal(tier, "must review");
+    assert.ok(Array.isArray(reasons));
+    assert.equal(reasons.length, 1);
+    assert.match(reasons[0], /\S/);
+    for (const path of paths) {
+      assert.ok(reasons[0].includes(path), `reason should name ${path}`);
+    }
+  });
+}
+
+test("simultaneous review triggers each contribute one reason", () => {
+  const overrides = Object.assign({}, ...reviewTriggers.map(([, input]) => input));
+  const { tier, reasons } = reviewTier({ ...reviewInput, ...overrides });
+  assert.equal(tier, "must review");
+  assert.ok(Array.isArray(reasons));
+  assert.equal(reasons.length, reviewTriggers.length);
+  for (const reason of reasons) assert.match(reason, /\S/);
+  for (const [, , paths] of reviewTriggers.filter(([, , paths]) => paths.length)) {
+    assert.ok(reasons.some((reason) => paths.every((path) => reason.includes(path))));
+  }
+});
+
+const fingerprintInput = {
+  base: "abc123",
+  title: "fix: refresh jobs",
+  previewUrl: "https://preview.example/jobs",
+  files: [
+    { rel: "src/app/api/jobs/route.ts", status: "M", text: "export const GET = listJobs;" },
+    { rel: "src/lib/jobs.ts", status: "A", text: "export const listJobs = () => [];" },
+  ],
+};
+
+test("fingerprints are strings and stable across calls and file order", () => {
+  const original = fingerprint(fingerprintInput);
+  assert.equal(typeof original, "string");
+  assert.equal(fingerprint(structuredClone(fingerprintInput)), original);
+  assert.equal(fingerprint({ ...fingerprintInput, files: [...fingerprintInput.files].reverse() }), original);
+});
+
+for (const [field, value] of Object.entries({
+  base: "def456",
+  title: "fix: list jobs",
+  previewUrl: "https://preview.example/queue",
+})) {
+  test(`fingerprint changes when ${field} changes`, () => {
+    assert.notEqual(fingerprint({ ...fingerprintInput, [field]: value }), fingerprint(fingerprintInput));
+  });
+}
+
+for (const [field, value] of Object.entries({
+  rel: "src/lib/queue.ts",
+  status: "D",
+  text: "export const listJobs = () => loadJobs();",
+})) {
+  test(`fingerprint changes when any file's ${field} changes`, () => {
+    for (const index of fingerprintInput.files.keys()) {
+      const files = fingerprintInput.files.map((file, position) => (
+        position === index ? { ...file, [field]: value } : file
+      ));
+      assert.notEqual(fingerprint({ ...fingerprintInput, files }), fingerprint(fingerprintInput), `file ${index + 1}`);
+    }
+  });
+}

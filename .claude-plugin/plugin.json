@@ -1,5 +1,5 @@
 {
   "name": "slopgate",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Blocks vague prompts, new comments, new Markdown files and common slop patterns before they land. Ships a read-only slop reviewer."
 }
